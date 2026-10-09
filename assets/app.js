@@ -1,4 +1,4 @@
-/* FSS site behaviour: simulated terminal, cluster demo, charts, TCO calculator. No dependencies. */
+/* FSS site behaviour: simulated terminal, cluster demo, charts, TCO calculator, switch savings. No dependencies. */
 (function () {
   'use strict';
   var D = window.FSS;
@@ -154,6 +154,60 @@
         '<div class="track"><div class="fill ' + (r.d.ours ? 'ours' : 'amber') + '" style="width:' + pct + '%"></div></div>' +
         '<div class="nt">' + esc(r.d.note) + '</div></div>';
     }).join('');
+    renderSwitch(rate, w, p);
+  }
+
+  /* ---------- switch from EMQX / HiveMQ (driven by the TCO state) ---------- */
+  var S = D.switchFrom;
+  var sw = 'emqx';
+  $('sw-tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-sw]');
+    if (!b) return;
+    sw = b.getAttribute('data-sw');
+    renderTco();
+  });
+
+  function renderSwitch(rate, w, p) {
+    var c = S[sw];
+    document.querySelectorAll('[data-sw]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-sw') === sw)); });
+    document.querySelectorAll('.sw-from').forEach(function (e) { e.textContent = c.label; });
+    $('sw-lic').textContent = c.lic;
+
+    // Headline: best node saving across workloads with published data for this competitor.
+    var best = { pct: 0 };
+    Object.keys(T.workloads).forEach(function (k) {
+      var o = T.workloads[k].others.filter(function (o) { return o.per && (o.name === c.tcoName || o.name === c.durName); })[0];
+      var v = o && Math.round((1 - o.per / T.workloads[k].mqttd) * 100);
+      if (o && v > best.pct) best = { pct: v, wl: T.workloads[k], o: o };
+    });
+    $('sw-upto').textContent = best.pct + '%';
+    $('sw-upto-note').textContent = '"Up to ' + best.pct + '%" is the node saving at high load for ' + best.wl.label + ': ' +
+      fmtRate(best.wl.mqttd) + ' msg/s per mqttd node vs ' + fmtRate(best.o.per) + ' for ' + best.o.name + '. ' + best.o.note +
+      ' Infrastructure only; at small loads both sit at the three-node HA minimum.';
+    $('sw-them-l').textContent = c.label.toUpperCase() + ' NODES';
+
+    // Prefer the selected workload; fall back to QoS 0 if it has no data for this competitor.
+    var find = function (wl) { return wl.others.filter(function (o) { return o.per && (o.name === c.tcoName || o.name === c.durName); })[0]; };
+    var wl = w, them = find(w);
+    if (!them) { wl = T.workloads.q0; them = find(wl); }
+    var usN = nodesFor(rate, wl.mqttd), themN = nodesFor(rate, them.per);
+    var pct = Math.round((1 - usN / themN) * 100);
+    var upTo = Math.round((1 - them.per / wl.mqttd) * 100);
+
+    $('sw-them').textContent = themN;
+    $('sw-us').textContent = usN;
+    $('sw-year').textContent = eur((themN - usN) * p * 12);
+    $('sw-note').textContent = (wl !== w ? w.label + ' has no published ' + c.label + ' figure, so this uses ' + wl.label + '. ' : '') +
+      'At ' + fmtRate(rate) + ' msg/s ' + wl.label + ' and €' + p + ' per node: ' + eur(themN * p) + '/mo on ' + them.name + ' vs ' + eur(usN * p) + '/mo on mqttd' +
+      (pct > 0 ? '.' : ', both at the three-node HA minimum. Savings grow with load, up to ' + upTo + '%.') +
+      ' Infrastructure only; ' + c.label + ' licence and support fees would come on top. Same caveats as the calculator.';
+    $('sw-facts').innerHTML = c.facts.map(function (f) {
+      return '<div class="stat"><b>' + esc(f[0]) + '</b><span>' + esc(f[1]) + '</span><span class="nt">' + esc(f[2]) + '</span></div>';
+    }).join('');
+    $('sw-steps').innerHTML = c.steps.map(function (s) {
+      return '<li><b>' + esc(s[0]) + '</b> ' + esc(s[1]) + '</li>';
+    }).join('');
+    $('sw-keep').textContent = c.keep;
   }
   renderTco();
 })();

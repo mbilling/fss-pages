@@ -227,6 +227,28 @@ h4 { font-size: 20px; font-weight: 700; }
 .ring { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--blue); display: inline-block; }
 .dash { width: 16px; border-top: 2px dashed #3A4640; display: inline-block; }
 
+/* switch */
+#switch { display: flex; flex-direction: column; gap: 22px; }
+#switch h2 .accent { white-space: nowrap; }
+.sw-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 32px; }
+.sw-hero .head { flex: 3 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.sw-diagram { flex: 2 1 300px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sw-box { flex: 1 1 0; min-width: 0; aspect-ratio: 3 / 4; max-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line-3); border-radius: 12px; background: var(--panel); font-weight: 700; font-size: 20px; }
+.sw-box small { font: 400 13px var(--mono); color: var(--muted); text-align: center; padding: 0 8px; }
+.sw-ours { border: 2px solid var(--accent); background: rgba(61,220,132,.08); }
+.sw-ours small { color: var(--accent); }
+.sw-arrow { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.sw-arrow i { width: 56px; height: 0; border-top: 2px dashed var(--accent); position: relative; }
+.sw-arrow i::after { content: ''; position: absolute; right: -2px; top: -6px; border: 5px solid transparent; border-left: 8px solid var(--accent); }
+.sw-h3 { font-size: 22px; font-stretch: 112%; margin-top: 12px; }
+#sw-facts .stat { display: flex; flex-direction: column; gap: 6px; }
+#sw-facts .stat span { color: var(--text-2); font-family: var(--font); font-size: 15px; }
+#sw-facts .stat .nt { color: var(--dim); font-family: var(--mono); font-size: 13px; }
+.sw-steps { margin: 0; padding: 0; list-style: none; counter-reset: sw; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.sw-steps li { counter-increment: sw; padding: 18px 20px; border-left: 2px solid var(--accent); background: var(--panel); border-radius: 0 12px 12px 0; font-size: 15px; color: var(--text-2); line-height: 1.55; }
+.sw-steps li::before { content: '0' counter(sw); display: block; font-family: var(--mono); font-size: 13px; color: var(--accent); margin-bottom: 4px; }
+.sw-steps li b { color: var(--text); }
+
 /* tco */
 .tco { display: flex; flex-wrap: wrap; gap: 24px; }
 .tco-controls { flex: 1 1 340px; min-width: 0; gap: 26px; }

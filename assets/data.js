@@ -63,5 +63,39 @@ window.FSS = {
         ]
       }
     }
+  },
+
+  // "Switch from" section. Savings are computed live in app.js from tco above
+  // (tcoName must match a tco.workloads[*].others[].name). Facts trace to bench/latency
+  // above and the feature comparison (docs/COMPARISON.md, 2026-08-19).
+  switchFrom: {
+    emqx: {
+      label: 'EMQX', tcoName: 'EMQX 5.8', lic: 'BSL 1.1 clustering',
+      facts: [
+        ['1.7×', 'throughput on the same 4-vCPU host', '75k vs 45k msg/s at p99 ≤ 1 s'],
+        ['97.8%', 'delivered within 10 ms at 45k msg/s', 'EMQX: 14.9%'],
+        ['€0', 'licence for clustering', 'EMQX 6.x clusters under BSL 1.1']
+      ],
+      steps: [
+        ['Convert', 'The built-in EMQX converter turns your config and ACLs into a reviewed mqttd draft.'],
+        ['Bridge', 'Run mqtt-bridge between EMQX and mqttd with deny-by-default rules, and move site by site.'],
+        ['Cut over', 'Point devices at mqttd. Drop the bridge when the last site has moved.']
+      ],
+      keep: 'Staying on EMQX makes sense if you rely on its dashboard, SQL rule engine or MQTT-SN/CoAP gateways.'
+    },
+    hivemq: {
+      label: 'HiveMQ', tcoName: 'HiveMQ', durName: 'HiveMQ 4.18', lic: 'Commercial clustering',
+      facts: [
+        ['2.5×', 'throughput vs HiveMQ CE, same host', '75k vs 30k msg/s at p99 ≤ 1 s'],
+        ['2.7×', 'durable QoS 1 per vCPU vs HiveMQ 4.18', '7,500 vs ~2,800, 2 copies, same CPU'],
+        ['€0', 'licence for clustering', 'HiveMQ CE is single-node; clustering is commercial']
+      ],
+      steps: [
+        ['Convert', 'The built-in HiveMQ converter turns your config and ACLs into a reviewed mqttd draft.'],
+        ['Bridge', 'Run mqtt-bridge between HiveMQ and mqttd with deny-by-default rules, and move site by site.'],
+        ['Cut over', 'Point devices at mqttd. Drop the bridge when the last site has moved.']
+      ],
+      keep: 'HiveMQ has published 100–200M-connection runs; mqttd is measured to 50k connections and has no production users yet.'
+    }
   }
 };

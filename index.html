@@ -28,6 +28,7 @@
       <a href="#broker">Broker</a>
       <a href="#numbers">Numbers</a>
       <a href="#tco">Cost</a>
+      <a href="#switch">Switch</a>
       <a href="#flow">How it runs</a>
       <a href="#suite">Suite</a>
       <a href="#start">Get started</a>
@@ -252,6 +253,42 @@
       </div>
     </div>
   </div>
+</section>
+
+<!-- SWITCH -->
+<section id="switch" class="wrap section">
+  <div class="row-wrap" id="sw-tabs" role="group" aria-label="Migrate from">
+    <button type="button" class="wl" data-sw="emqx" aria-pressed="true">From EMQX</button>
+    <button type="button" class="wl" data-sw="hivemq" aria-pressed="false">From HiveMQ</button>
+  </div>
+  <div class="sw-hero">
+    <div class="head">
+      <div class="eyebrow"><span class="sw-from">EMQX</span> → MQTTD MIGRATION</div>
+      <h2>Migrate from <span class="sw-from">EMQX</span> to mqttd and save <span class="accent">up to <span id="sw-upto">61%</span></span></h2>
+      <p id="sw-sub">Fewer nodes for the same load, and clustering with no licence. Apache-2.0 from the first node to the last.</p>
+      <div class="row-wrap">
+        <a class="btn btn-primary" href="#start">Get started</a>
+        <a class="btn btn-ghost" href="#tco">Calculate your savings</a>
+      </div>
+    </div>
+    <div class="sw-diagram" aria-hidden="true">
+      <div class="sw-box"><span class="sw-from">EMQX</span><small id="sw-lic">BSL 1.1 clustering</small></div>
+      <div class="sw-arrow"><span>Migrate</span><i></i></div>
+      <div class="sw-box sw-ours"><span>mqttd</span><small>Apache-2.0</small></div>
+    </div>
+  </div>
+  <p class="note" id="sw-upto-note"></p>
+
+  <h3 class="sw-h3">At the load in your calculator</h3>
+  <div class="stats">
+    <div class="stat"><span id="sw-them-l">EMQX NODES</span><b id="sw-them">–</b></div>
+    <div class="stat stat-accent"><span>MQTTD NODES</span><b id="sw-us">–</b></div>
+    <div class="stat"><span>SAVED PER YEAR</span><b class="accent" id="sw-year">–</b></div>
+  </div>
+  <p class="note" id="sw-note"></p>
+  <div class="cards" id="sw-facts"></div>
+  <ol class="sw-steps" id="sw-steps"></ol>
+  <p class="note" id="sw-keep"></p>
 </section>
 
 <!-- FLOW -->
