@@ -37,13 +37,19 @@ window.FSS = {
     { name: 'HiveMQ CE', pct: 0.4 }
   ],
 
-  // TCO model: msg/s per 4-vCPU node
+  // TCO model. mqttd capacity comes from the measured scale curve: [nodes, highest GREEN msg/s]
+  // on 4-vCPU CCX23 nodes. app.js interpolates between points and extrapolates beyond the
+  // last one on the least-squares slope; a single-point curve is not extrapolated at all.
+  // Competitors: msg/s per 4-vCPU node, scaled linearly.
   tco: {
     defaultPrice: 86,   // EUR/month, Hetzner CCX23 list after June 2026 repricing — verify before relying on it
     minNodes: 3,        // HA minimum
     workloads: {
       q0: {
-        label: 'QoS 0 telemetry', mqttd: 114000,
+        label: 'QoS 0 telemetry',
+        // README "Cluster scale-out, QoS 0" (knee-3-5-7-10.md, 2026-09-26). 3 nodes is a floor
+        // (whole ladder GREEN); the 10-node arm failed the mesh gate (strictly certified: 900k).
+        curve: [[3, 360000], [5, 570000], [7, 810000], [10, 1140000]],
         others: [
           { name: 'EMQX 5.8', per: 45000, note: 'Same-host knee, scaled linearly. Clustering under BSL licence: add its cost.' },
           { name: 'HiveMQ', per: 30000, note: 'CE knee, scaled linearly. CE is single-node; clustering is commercial.' },
@@ -51,13 +57,17 @@ window.FSS = {
         ]
       },
       q1: {
-        label: 'QoS 1, clean', mqttd: 39000,
+        label: 'QoS 1, clean',
+        // README "Cluster scale-out, QoS 1" (QOS1-SCALE-CURVE.md, 2026-09-26)
+        curve: [[3, 120000], [5, 180000], [7, 270000], [10, 390000]],
         others: [
           { name: 'Others', per: 0, note: 'No like-for-like published QoS 1 clean-session cluster data to compare against.' }
         ]
       },
       dur: {
-        label: 'Durable QoS 1', mqttd: 30000,
+        label: 'Durable QoS 1',
+        // 0080-replicas-ab-n3.md (2026-09-30). Durable scale-out is not proven yet (README: "3 ≈ 1 node").
+        curve: [[3, 90000]],
         others: [
           { name: 'HiveMQ 4.18', per: 11250, note: 'Published 2,812 msg/s per vCPU, durable, 2 copies, same CPU family. Commercial licence extra.' }
         ]

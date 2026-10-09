@@ -114,6 +114,31 @@
   var fmtRate = function (r) { return r >= 1e6 ? (r / 1e6).toFixed(2).replace(/0$/, '') + 'M' : Math.round(r / 1000) + 'k'; };
   var nodesFor = function (r, per) { return Math.max(T.minNodes, Math.ceil(r / per)); };
 
+  // mqttd capacity from the measured scale curve: linear between measured points, the
+  // least-squares slope past the last one. One point means no proven scale-out: no extrapolation.
+  var slopeOf = function (c) {
+    if (c.length < 2) return 0;
+    var mx = 0, my = 0, sxy = 0, sxx = 0;
+    c.forEach(function (q) { mx += q[0] / c.length; my += q[1] / c.length; });
+    c.forEach(function (q) { sxy += (q[0] - mx) * (q[1] - my); sxx += (q[0] - mx) * (q[0] - mx); });
+    return sxy / sxx;
+  };
+  var capAt = function (c, n) {
+    var last = c[c.length - 1];
+    if (n <= c[0][0]) return c[0][1];
+    if (n >= last[0]) return c.length < 2 ? last[1] : last[1] + slopeOf(c) * (n - last[0]);
+    for (var i = 1; i < c.length; i++) {
+      if (n <= c[i][0]) return c[i - 1][1] + (c[i][1] - c[i - 1][1]) * (n - c[i - 1][0]) / (c[i][0] - c[i - 1][0]);
+    }
+  };
+  // -> { n, extra } (extra: beyond the largest measured cluster), or null when not proven
+  var mqttdFor = function (r, c) {
+    var last = c[c.length - 1];
+    if (c.length < 2 && r > last[1]) return null;
+    for (var n = T.minNodes; n < 1000; n++) if (capAt(c, n) >= r) return { n: n, extra: n > last[0] };
+    return null;
+  };
+
   $('workloads').innerHTML = Object.keys(T.workloads).map(function (id) {
     return '<button type="button" class="wl" data-wl="' + id + '" aria-pressed="' + (id === state.wl) + '">' + esc(T.workloads[id].label) + '</button>';
   }).join('');
@@ -132,16 +157,25 @@
     var rate = Math.round(raw / mag) * mag;
     var w = T.workloads[state.wl];
     var p = state.price;
-    var mqN = nodesFor(rate, w.mqttd);
+    var mq = mqttdFor(rate, w.curve);
+    var mqN = mq ? mq.n : 0;
+    var slope = slopeOf(w.curve);
+    var lastPt = w.curve[w.curve.length - 1];
 
     $('rate-label').textContent = fmtRate(rate) + ' msg/s';
     $('price-label').textContent = '€' + p + '/mo';
-    $('mq-nodes').textContent = mqN;
-    $('mq-cost').textContent = eur(mqN * p);
-    $('marginal').textContent = '€' + (p / (w.mqttd / 1000)).toFixed(2);
+    $('mq-nodes').textContent = mq ? mqN : '—';
+    $('mq-cost').textContent = mq ? eur(mqN * p) : '—';
+    $('marginal').textContent = slope ? '€' + (p / (slope / 1000)).toFixed(2) : '—';
     document.querySelectorAll('.wl').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-wl') === state.wl)); });
 
-    var rows = [{ name: 'mqttd', per: w.mqttd, note: 'Measured per-node rate, Apache-2.0, clustering free.', ours: true }].concat(w.others).map(function (d) {
+    var mqNote = (slope
+      ? 'Measured scale curve, ' + w.curve.map(function (q) { return q[0]; }).join('/') + ' nodes; ~' + fmtRate(slope) + ' msg/s per added node.' +
+        (mq && mq.extra ? ' Extrapolated past the largest measured cluster (' + lastPt[0] + ' nodes, ' + fmtRate(lastPt[1]) + ').' : '')
+      : 'Measured ' + fmtRate(lastPt[1]) + ' msg/s on ' + lastPt[0] + ' nodes. Durable scale-out is not proven yet, so nothing is extrapolated.') +
+      ' Apache-2.0, clustering free.';
+    var rows = [{ name: 'mqttd', note: mqNote, ours: true }].concat(w.others).map(function (d) {
+      if (d.ours) return mq ? { d: d, label: mqN + ' nodes', cost: mqN * p, text: eur(mqN * p) + '/mo' } : { d: d, label: 'not measured at this load', cost: 0, text: '—' };
       if (!d.per) return { d: d, label: 'n/a', cost: 0, text: '—' };
       if (d.single) return rate <= d.per ? { d: d, label: '1 node, no HA', cost: p, text: eur(p) + '/mo' } : { d: d, label: 'cannot carry this load', cost: 0, text: '—' };
       var n = nodesFor(rate, d.per);
@@ -173,34 +207,40 @@
     document.querySelectorAll('.sw-from').forEach(function (e) { e.textContent = c.label; });
     $('sw-lic').textContent = c.lic;
 
-    // Headline: best node saving across workloads with published data for this competitor.
+    // Headline: best node saving at the largest measured mqttd cluster, per workload with data for this competitor.
+    var find = function (wl) { return wl.others.filter(function (o) { return o.per && (o.name === c.tcoName || o.name === c.durName); })[0]; };
     var best = { pct: 0 };
     Object.keys(T.workloads).forEach(function (k) {
-      var o = T.workloads[k].others.filter(function (o) { return o.per && (o.name === c.tcoName || o.name === c.durName); })[0];
-      var v = o && Math.round((1 - o.per / T.workloads[k].mqttd) * 100);
-      if (o && v > best.pct) best = { pct: v, wl: T.workloads[k], o: o };
+      var wk = T.workloads[k], o = find(wk), pt = wk.curve[wk.curve.length - 1];
+      if (!o) return;
+      var tn = nodesFor(pt[1], o.per), v = Math.round((1 - pt[0] / tn) * 100);
+      if (v > best.pct) best = { pct: v, wl: wk, o: o, pt: pt, tn: tn };
     });
     $('sw-upto').textContent = best.pct + '%';
-    $('sw-upto-note').textContent = '"Up to ' + best.pct + '%" is the node saving at high load for ' + best.wl.label + ': ' +
-      fmtRate(best.wl.mqttd) + ' msg/s per mqttd node vs ' + fmtRate(best.o.per) + ' for ' + best.o.name + '. ' + best.o.note +
+    $('sw-upto-note').textContent = '"Up to ' + best.pct + '%" is the node saving at the largest measured mqttd cluster for ' + best.wl.label + ': ' +
+      fmtRate(best.pt[1]) + ' msg/s on ' + best.pt[0] + ' mqttd nodes vs ' + best.tn + ' ' + best.o.name + ' nodes. ' + best.o.note +
       ' Infrastructure only; at small loads both sit at the three-node HA minimum.';
     $('sw-them-l').textContent = c.label.toUpperCase() + ' NODES';
 
     // Prefer the selected workload; fall back to QoS 0 if it has no data for this competitor.
-    var find = function (wl) { return wl.others.filter(function (o) { return o.per && (o.name === c.tcoName || o.name === c.durName); })[0]; };
     var wl = w, them = find(w);
     if (!them) { wl = T.workloads.q0; them = find(wl); }
-    var usN = nodesFor(rate, wl.mqttd), themN = nodesFor(rate, them.per);
-    var pct = Math.round((1 - usN / themN) * 100);
-    var upTo = Math.round((1 - them.per / wl.mqttd) * 100);
-
+    var us = mqttdFor(rate, wl.curve), themN = nodesFor(rate, them.per);
+    var pre = wl !== w ? w.label + ' has no published ' + c.label + ' figure, so this uses ' + wl.label + '. ' : '';
     $('sw-them').textContent = themN;
-    $('sw-us').textContent = usN;
-    $('sw-year').textContent = eur((themN - usN) * p * 12);
-    $('sw-note').textContent = (wl !== w ? w.label + ' has no published ' + c.label + ' figure, so this uses ' + wl.label + '. ' : '') +
-      'At ' + fmtRate(rate) + ' msg/s ' + wl.label + ' and €' + p + ' per node: ' + eur(themN * p) + '/mo on ' + them.name + ' vs ' + eur(usN * p) + '/mo on mqttd' +
-      (pct > 0 ? '.' : ', both at the three-node HA minimum. Savings grow with load, up to ' + upTo + '%.') +
-      ' Infrastructure only; ' + c.label + ' licence and support fees would come on top. Same caveats as the calculator.';
+    $('sw-us').textContent = us ? us.n : '—';
+    $('sw-year').textContent = us ? eur((themN - us.n) * p * 12) : '—';
+    if (!us) {
+      var lp = wl.curve[wl.curve.length - 1];
+      $('sw-note').textContent = pre + 'mqttd ' + wl.label + ' is measured to ' + fmtRate(lp[1]) + ' msg/s on ' + lp[0] + ' nodes and its scale-out is not proven yet, so there is no mqttd figure at ' +
+        fmtRate(rate) + ' msg/s. Lower the rate in the calculator to compare.';
+    } else {
+      var pct = Math.round((1 - us.n / themN) * 100);
+      $('sw-note').textContent = pre + 'At ' + fmtRate(rate) + ' msg/s ' + wl.label + ' and €' + p + ' per node: ' + eur(themN * p) + '/mo on ' + them.name + ' vs ' + eur(us.n * p) + '/mo on mqttd' +
+        (pct > 0 ? ' (' + pct + '% fewer nodes).' : ', both at the three-node HA minimum. Savings grow with load.') +
+        (us.extra ? ' The mqttd figure is extrapolated past the largest measured cluster.' : '') +
+        ' Infrastructure only; ' + c.label + ' licence and support fees would come on top. Same caveats as the calculator.';
+    }
     $('sw-facts').innerHTML = c.facts.map(function (f) {
       return '<div class="stat"><b>' + esc(f[0]) + '</b><span>' + esc(f[1]) + '</span><span class="nt">' + esc(f[2]) + '</span></div>';
     }).join('');
