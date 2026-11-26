@@ -121,8 +121,7 @@ window.FSS = {
       // At each side's real AWS list price, on HiveMQ's own shape (3 nodes x 32 vCPU), 730 h a month.
       // HiveMQ: 3 x m6a.8xlarge, $1.3824/h (EVIDENCE.md price basis), 270,000 msg/s published.
       // mqttd: 3 x m6i.8xlarge, v1.3.0, 366,300 msg/s (RIG2-RESULTS.md).
-      // VERIFY before publishing: the m6i.8xlarge price is from memory, not yet checked against
-      // aws.amazon.com/ec2/pricing/on-demand (us-east-1, Linux).
+      // m6i.8xlarge $1.536/h: AWS EC2 on-demand pricing page (us-east-1, Linux), confirmed 2026-11-26.
       listPrice: {
         theirs: { name: 'HiveMQ 4.18', host: '3 × m6a.8xlarge', perHour: 1.3824, nodes: 3, rate: 270000 },
         ours: { name: 'mqttd v1.3.0', host: '3 × m6i.8xlarge', perHour: 1.536, nodes: 3, rate: 366300 }
