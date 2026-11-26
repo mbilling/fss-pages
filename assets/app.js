@@ -1,9 +1,27 @@
-/* FSS site behaviour: simulated terminal, cluster demo, charts, TCO calculator, switch savings. No dependencies. */
+/* FSS site behaviour: theme toggle, simulated terminal, cluster demo, charts, TCO calculator, switch savings. No dependencies. */
 (function () {
   'use strict';
   var D = window.FSS;
   var $ = function (id) { return document.getElementById(id); };
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* ---------- light / dark theme (initial choice is set inline in <head>) ---------- */
+  var root = document.documentElement;
+  var sysLight = window.matchMedia('(prefers-color-scheme: light)');
+  var themeNow = function () { return root.getAttribute('data-theme') || (sysLight.matches ? 'light' : 'dark'); };
+  function syncTheme() {
+    var t = themeNow();
+    root.setAttribute('data-theme-now', t);
+    $('theme-btn').setAttribute('aria-label', 'Switch to ' + (t === 'dark' ? 'light' : 'dark') + ' theme');
+  }
+  $('theme-btn').addEventListener('click', function () {
+    var next = themeNow() === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('fss-theme', next); } catch (e) { /* storage blocked: theme still applies for this visit */ }
+    syncTheme();
+  });
+  if (sysLight.addEventListener) sysLight.addEventListener('change', syncTheme);
+  syncTheme();
+
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
 
   /* ---------- simulated fss-mqtt terminal ---------- */
@@ -85,19 +103,23 @@
   applyMotion();
 
   /* ---------- benchmark bars ---------- */
-  var maxB = Math.max.apply(null, D.bench.map(function (b) { return b.val; }));
-  $('bench').innerHTML = D.bench.map(function (b, i) {
-    return '<div class="brow"><div class="nm">' + esc(b.name) + ' <small>' + esc(b.ver) + '</small></div>' +
-      '<div class="track"><div class="fill' + (b.ours ? ' ours' : '') + '" style="width:' + (b.val / maxB * 100) + '%;transition-delay:' + (i * 0.15) + 's"></div></div>' +
-      '<div class="val">' + b.val.toLocaleString('en-US') + '</div></div>';
-  }).join('');
+  function bars(el, rows) {
+    var max = Math.max.apply(null, rows.map(function (b) { return b.val; }));
+    el.innerHTML = rows.map(function (b, i) {
+      return '<div class="brow"><div class="nm">' + esc(b.name) + ' <small>' + esc(b.ver) + '</small></div>' +
+        '<div class="track"><div class="fill' + (b.ours ? ' ours' : '') + '" style="width:' + (b.val / max * 100) + '%;transition-delay:' + (i * 0.15) + 's"></div></div>' +
+        '<div class="val">' + b.val.toLocaleString('en-US') + '</div></div>';
+    }).join('');
+  }
+  bars($('pervcpu'), D.perVcpu);
+  bars($('bench'), D.bench);
   $('lat').innerHTML = D.latency.map(function (l) {
     return '<div class="lrow"><div class="lt"><span>' + esc(l.name) + '</span><span class="mono">' + l.pct + '%</span></div>' +
       '<div class="track"><div class="fill' + (l.ours ? ' ours' : '') + '" style="width:' + l.pct + '%"></div></div></div>';
   }).join('');
 
   // animate bars and curves when they scroll into view
-  var targets = [$('bench'), $('lat'), document.querySelector('.chart')];
+  var targets = [$('pervcpu'), $('bench'), $('lat'), document.querySelector('.chart')];
   if ('IntersectionObserver' in window && !reduced) {
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in-view'); io.unobserve(e.target); } });
@@ -109,12 +131,13 @@
 
   /* ---------- TCO calculator ---------- */
   var T = D.tco;
-  var state = { rateIdx: 50, price: T.defaultPrice, wl: 'q0' };
-  var eur = function (x) { return '€' + Math.round(x).toLocaleString('en-US'); };
-  var fmtRate = function (r) { return r >= 1e6 ? (r / 1e6).toFixed(2).replace(/0$/, '') + 'M' : Math.round(r / 1000) + 'k'; };
-  var nodesFor = function (r, per) { return Math.max(T.minNodes, Math.ceil(r / per)); };
+  var RATE_MIN = 10000, RATE_SPAN = 200; // slider covers 10k .. 2M msg/s, log scale
+  var state = { rateIdx: 62, price: T.defaultPrice, wl: T.defaultWl };
+  var usd = function (x) { return '$' + Math.round(x).toLocaleString('en-US'); };
+  var fmtRate = function (r) { return r >= 1e6 ? (r / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M' : Math.round(r / 1000) + 'k'; };
+  var fmtVcpu = function (v) { return (v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)) + ' vCPU'; };
 
-  // mqttd capacity from the measured scale curve: linear between measured points, the
+  // mqttd capacity from a measured curve: linear between measured points, the
   // least-squares slope past the last one. One point means no proven scale-out: no extrapolation.
   var slopeOf = function (c) {
     if (c.length < 2) return 0;
@@ -131,13 +154,20 @@
       if (n <= c[i][0]) return c[i - 1][1] + (c[i][1] - c[i - 1][1]) * (n - c[i - 1][0]) / (c[i][0] - c[i - 1][0]);
     }
   };
-  // -> { n, extra } (extra: beyond the largest measured cluster), or null when not proven
-  var mqttdFor = function (r, c) {
+  // -> { n, how: 'measured' | 'interpolated' | 'extrapolated' }, or null when not proven
+  var mqttdFor = function (r, c, noExtra) {
     var last = c[c.length - 1];
-    if (c.length < 2 && r > last[1]) return null;
-    for (var n = T.minNodes; n < 1000; n++) if (capAt(c, n) >= r) return { n: n, extra: n > last[0] };
+    if ((c.length < 2 || noExtra) && r > last[1]) return null;
+    for (var n = T.minNodes; n < 1000; n++) {
+      if (capAt(c, n) >= r) {
+        var hit = c.some(function (q) { return q[0] === n; });
+        return { n: n, how: n > last[0] ? 'extrapolated' : hit || n === c[0][0] ? 'measured' : 'interpolated' };
+      }
+    }
     return null;
   };
+  // A competitor priced per vCPU through its published point, with the same 3-node HA floor.
+  var theirVcpu = function (r, o, w) { return Math.max(T.minNodes * w.vcpu, r / o.perVcpu); };
 
   $('workloads').innerHTML = Object.keys(T.workloads).map(function (id) {
     return '<button type="button" class="wl" data-wl="' + id + '" aria-pressed="' + (id === state.wl) + '">' + esc(T.workloads[id].label) + '</button>';
@@ -148,52 +178,54 @@
     state.wl = b.getAttribute('data-wl');
     renderTco();
   });
+  $('rate').value = state.rateIdx;
+  $('price').value = state.price;
   $('rate').addEventListener('input', function (e) { state.rateIdx = +e.target.value; renderTco(); });
   $('price').addEventListener('input', function (e) { state.price = +e.target.value; renderTco(); });
 
   function renderTco() {
-    var raw = 10000 * Math.pow(120, state.rateIdx / 100);
+    var raw = RATE_MIN * Math.pow(RATE_SPAN, state.rateIdx / 100);
     var mag = Math.pow(10, Math.floor(Math.log10(raw)) - 1);
     var rate = Math.round(raw / mag) * mag;
     var w = T.workloads[state.wl];
-    var p = state.price;
-    var mq = mqttdFor(rate, w.curve);
-    var mqN = mq ? mq.n : 0;
+    var p = state.price, nodeP = p * w.vcpu;
+    var mq = mqttdFor(rate, w.curve, w.extrapolate === false);
     var slope = slopeOf(w.curve);
     var lastPt = w.curve[w.curve.length - 1];
 
     $('rate-label').textContent = fmtRate(rate) + ' msg/s';
-    $('price-label').textContent = '€' + p + '/mo';
-    $('mq-nodes').textContent = mq ? mqN : '—';
-    $('mq-cost').textContent = mq ? eur(mqN * p) : '—';
-    $('marginal').textContent = slope ? '€' + (p / (slope / 1000)).toFixed(2) : '—';
-    document.querySelectorAll('.wl').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-wl') === state.wl)); });
+    $('price-label').textContent = '$' + p.toFixed(2) + '/vCPU·mo';
+    $('wl-desc').textContent = w.desc;
+    $('mq-nodes-l').textContent = 'MQTTD NODES · ' + w.vcpu + ' VCPU';
+    $('mq-nodes').textContent = mq ? mq.n : '—';
+    $('mq-cost').textContent = mq ? usd(mq.n * nodeP) : '—';
+    $('marginal').textContent = slope ? '$' + (nodeP / (slope / 1000)).toFixed(2) : '—';
+    document.querySelectorAll('.wl[data-wl]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-wl') === state.wl)); });
 
-    var mqNote = (slope
-      ? 'Measured scale curve, ' + w.curve.map(function (q) { return q[0]; }).join('/') + ' nodes; ~' + fmtRate(slope) + ' msg/s per added node.' +
-        (mq && mq.extra ? ' Extrapolated past the largest measured cluster (' + lastPt[0] + ' nodes, ' + fmtRate(lastPt[1]) + ').' : '')
-      : 'Measured ' + fmtRate(lastPt[1]) + ' msg/s on ' + lastPt[0] + ' nodes. Durable scale-out is not proven yet, so nothing is extrapolated.') +
-      ' Apache-2.0, clustering free.';
+    var pts = w.curve.map(function (q) { return q[0] + ' → ' + fmtRate(q[1]); }).join(', ');
+    var how = { interpolated: ' Interpolated between measured clusters.', extrapolated: ' Extrapolated past the largest measured cluster on ~' + fmtRate(slope) + ' msg/s per added node.' };
+    var mqNote = 'Measured on ' + w.node + ': ' + pts + ' msg/s.' + ((mq && how[mq.how]) || '') + ' Apache-2.0, clustering free.';
     var rows = [{ name: 'mqttd', note: mqNote, ours: true }].concat(w.others).map(function (d) {
-      if (d.ours) return mq ? { d: d, label: mqN + ' nodes', cost: mqN * p, text: eur(mqN * p) + '/mo' } : { d: d, label: 'not measured at this load', cost: 0, text: '—' };
-      if (!d.per) return { d: d, label: 'n/a', cost: 0, text: '—' };
-      if (d.single) return rate <= d.per ? { d: d, label: '1 node, no HA', cost: p, text: eur(p) + '/mo' } : { d: d, label: 'cannot carry this load', cost: 0, text: '—' };
-      var n = nodesFor(rate, d.per);
-      return { d: d, label: n + ' nodes', cost: n * p, text: eur(n * p) + '/mo' };
+      if (d.ours) return mq ? { d: d, label: mq.n + ' × ' + w.vcpu + ' vCPU', cost: mq.n * nodeP } : { d: d, label: 'beyond the largest measured cluster', cost: 0 };
+      var v = theirVcpu(rate, d, w);
+      return { d: d, label: fmtVcpu(v), cost: v * p };
     });
     var max = Math.max.apply(null, rows.map(function (r) { return r.cost; })) || 1;
     $('alts').innerHTML = rows.map(function (r) {
       var pct = r.cost ? Math.max(r.cost / max * 100, 2) : 0;
-      return '<div class="alt"><div class="at"><span><b>' + esc(r.d.name) + '</b> <small>· ' + esc(r.label) + '</small></span><span class="mono">' + r.text + '</span></div>' +
+      return '<div class="alt"><div class="at"><span><b>' + esc(r.d.name) + '</b> <small>· ' + esc(r.label) + '</small></span><span class="mono">' + (r.cost ? usd(r.cost) + '/mo' : '—') + '</span></div>' +
         '<div class="track"><div class="fill ' + (r.d.ours ? 'ours' : 'amber') + '" style="width:' + pct + '%"></div></div>' +
         '<div class="nt">' + esc(r.d.note) + '</div></div>';
-    }).join('');
+    }).join('') + (w.others.length ? '' : '<p class="note">No competitor has published a like-for-like figure for this workload, so none is drawn.</p>');
     renderSwitch(rate, w, p);
   }
 
-  /* ---------- switch from EMQX / HiveMQ (driven by the TCO state) ---------- */
+  /* ---------- switch from HiveMQ / EMQX (driven by the TCO state) ---------- */
   var S = D.switchFrom;
-  var sw = 'emqx';
+  var sw = Object.keys(S)[0];
+  $('sw-tabs').innerHTML = Object.keys(S).map(function (k) {
+    return '<button type="button" class="wl" data-sw="' + k + '" aria-pressed="' + (k === sw) + '">From ' + esc(S[k].label) + '</button>';
+  }).join('');
   $('sw-tabs').addEventListener('click', function (e) {
     var b = e.target.closest('[data-sw]');
     if (!b) return;
@@ -206,41 +238,6 @@
     document.querySelectorAll('[data-sw]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-sw') === sw)); });
     document.querySelectorAll('.sw-from').forEach(function (e) { e.textContent = c.label; });
     $('sw-lic').textContent = c.lic;
-
-    // Headline: best node saving at the largest measured mqttd cluster, per workload with data for this competitor.
-    var find = function (wl) { return wl.others.filter(function (o) { return o.per && (o.name === c.tcoName || o.name === c.durName); })[0]; };
-    var best = { pct: 0 };
-    Object.keys(T.workloads).forEach(function (k) {
-      var wk = T.workloads[k], o = find(wk), pt = wk.curve[wk.curve.length - 1];
-      if (!o) return;
-      var tn = nodesFor(pt[1], o.per), v = Math.round((1 - pt[0] / tn) * 100);
-      if (v > best.pct) best = { pct: v, wl: wk, o: o, pt: pt, tn: tn };
-    });
-    $('sw-upto').textContent = best.pct + '%';
-    $('sw-upto-note').textContent = '"Up to ' + best.pct + '%" is the node saving at the largest measured mqttd cluster for ' + best.wl.label + ': ' +
-      fmtRate(best.pt[1]) + ' msg/s on ' + best.pt[0] + ' mqttd nodes vs ' + best.tn + ' ' + best.o.name + ' nodes. ' + best.o.note +
-      ' Infrastructure only; at small loads both sit at the three-node HA minimum.';
-    $('sw-them-l').textContent = c.label.toUpperCase() + ' NODES';
-
-    // Prefer the selected workload; fall back to QoS 0 if it has no data for this competitor.
-    var wl = w, them = find(w);
-    if (!them) { wl = T.workloads.q0; them = find(wl); }
-    var us = mqttdFor(rate, wl.curve), themN = nodesFor(rate, them.per);
-    var pre = wl !== w ? w.label + ' has no published ' + c.label + ' figure, so this uses ' + wl.label + '. ' : '';
-    $('sw-them').textContent = themN;
-    $('sw-us').textContent = us ? us.n : '—';
-    $('sw-year').textContent = us ? eur((themN - us.n) * p * 12) : '—';
-    if (!us) {
-      var lp = wl.curve[wl.curve.length - 1];
-      $('sw-note').textContent = pre + 'mqttd ' + wl.label + ' is measured to ' + fmtRate(lp[1]) + ' msg/s on ' + lp[0] + ' nodes and its scale-out is not proven yet, so there is no mqttd figure at ' +
-        fmtRate(rate) + ' msg/s. Lower the rate in the calculator to compare.';
-    } else {
-      var pct = Math.round((1 - us.n / themN) * 100);
-      $('sw-note').textContent = pre + 'At ' + fmtRate(rate) + ' msg/s ' + wl.label + ' and €' + p + ' per node: ' + eur(themN * p) + '/mo on ' + them.name + ' vs ' + eur(us.n * p) + '/mo on mqttd' +
-        (pct > 0 ? ' (' + pct + '% fewer nodes).' : ', both at the three-node HA minimum. Savings grow with load.') +
-        (us.extra ? ' The mqttd figure is extrapolated past the largest measured cluster.' : '') +
-        ' Infrastructure only; ' + c.label + ' licence and support fees would come on top. Same caveats as the calculator.';
-    }
     $('sw-facts').innerHTML = c.facts.map(function (f) {
       return '<div class="stat"><b>' + esc(f[0]) + '</b><span>' + esc(f[1]) + '</span><span class="nt">' + esc(f[2]) + '</span></div>';
     }).join('');
@@ -248,6 +245,51 @@
       return '<li><b>' + esc(s[0]) + '</b> ' + esc(s[1]) + '</li>';
     }).join('');
     $('sw-keep').textContent = c.keep;
+
+    var find = function (wk) { return wk.others.filter(function (o) { return o.name === c.cmp; })[0]; };
+    var withData = Object.keys(T.workloads).map(function (k) { return T.workloads[k]; }).filter(find);
+    $('sw-live').hidden = !withData.length;
+    if (!withData.length) {
+      $('sw-save').textContent = c.headline;
+      $('sw-sub').textContent = c.sub;
+      $('sw-upto-note').textContent = c.noCost;
+      return;
+    }
+
+    // Headline: the best saving at a measured mqttd cluster, in hardware at the same price per vCPU.
+    var best = { pct: 0 };
+    withData.forEach(function (wk) {
+      var o = find(wk);
+      wk.curve.forEach(function (q) {
+        var ours = q[0] * wk.vcpu, theirs = theirVcpu(q[1], o, wk), v = Math.round((1 - ours / theirs) * 100);
+        if (v > best.pct) best = { pct: v, wl: wk, o: o, q: q, ours: ours, theirs: theirs };
+      });
+    });
+    $('sw-save').innerHTML = 'and save <span class="accent">up to ' + best.pct + '%</span>';
+    $('sw-sub').textContent = 'The same durable traffic on a fraction of the hardware, and clustering with no licence. Apache-2.0 from the first node to the last.';
+    $('sw-upto-note').textContent = '"Up to ' + best.pct + '%" is measured, not modelled: ' + best.q[0] + ' mqttd nodes (' + best.ours + ' vCPU) carry ' +
+      best.q[1].toLocaleString('en-US') + ' msg/s of ' + best.wl.label + '; at its published rate, ' + best.o.name + ' needs ' + fmtVcpu(best.theirs) +
+      ' for that (' + (best.theirs / best.ours).toFixed(1) + '× the hardware). Same price per vCPU, licence not included.';
+
+    // Live comparison at the calculator's load; fall back to a workload with data.
+    var wl = find(w) ? w : withData[0], them = find(wl);
+    var us = mqttdFor(rate, wl.curve, wl.extrapolate === false), tv = theirVcpu(rate, them, wl);
+    var pre = wl !== w ? w.label + ' has no published ' + c.label + ' figure, so this uses ' + wl.label + '. ' : '';
+    $('sw-them-l').textContent = c.label.toUpperCase() + ' · VCPU';
+    $('sw-them').textContent = Math.round(tv);
+    $('sw-us').textContent = us ? us.n * wl.vcpu : '—';
+    $('sw-year').textContent = us ? usd(Math.max(0, tv * p - us.n * wl.vcpu * p) * 12) : '—';
+    if (!us) {
+      var lp = wl.curve[wl.curve.length - 1];
+      $('sw-note').textContent = pre + 'mqttd ' + wl.label + ' is measured up to ' + fmtRate(lp[1]) + ' msg/s on ' + lp[0] + ' nodes, and its per-node rate falls with size, so there is no mqttd figure at ' +
+        fmtRate(rate) + ' msg/s. Lower the rate in the calculator, or see the site-bridge shape, measured to 2M.';
+    } else {
+      var ours = us.n * wl.vcpu;
+      $('sw-note').textContent = pre + 'At ' + fmtRate(rate) + ' msg/s ' + wl.label + ' and $' + p.toFixed(2) + ' per vCPU-month: ' + usd(tv * p) + '/mo on ' + them.name +
+        ' vs ' + usd(ours * p) + '/mo on ' + us.n + ' mqttd nodes' + (tv > ours ? ' (' + (tv / ours).toFixed(1) + '× less hardware).' : ', both at the three-node HA minimum.') +
+        (us.how === 'measured' ? '' : ' The mqttd node count is ' + us.how + ' from measured clusters.') +
+        ' Licence and support fees come on top for ' + c.label + '. Same caveats as the calculator.';
+    }
   }
   renderTco();
 })();
