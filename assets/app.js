@@ -1,9 +1,27 @@
-/* FSS site behaviour: simulated terminal, cluster demo, charts, TCO calculator. No dependencies. */
+/* FSS site behaviour: theme toggle, simulated terminal, cluster demo, charts, TCO calculator, switch savings. No dependencies. */
 (function () {
   'use strict';
   var D = window.FSS;
   var $ = function (id) { return document.getElementById(id); };
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* ---------- light / dark theme (initial choice is set inline in <head>) ---------- */
+  var root = document.documentElement;
+  var sysLight = window.matchMedia('(prefers-color-scheme: light)');
+  var themeNow = function () { return root.getAttribute('data-theme') || (sysLight.matches ? 'light' : 'dark'); };
+  function syncTheme() {
+    var t = themeNow();
+    root.setAttribute('data-theme-now', t);
+    $('theme-btn').setAttribute('aria-label', 'Switch to ' + (t === 'dark' ? 'light' : 'dark') + ' theme');
+  }
+  $('theme-btn').addEventListener('click', function () {
+    var next = themeNow() === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('fss-theme', next); } catch (e) { /* storage blocked: theme still applies for this visit */ }
+    syncTheme();
+  });
+  if (sysLight.addEventListener) sysLight.addEventListener('change', syncTheme);
+  syncTheme();
+
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
 
   /* ---------- simulated fss-mqtt terminal ---------- */
@@ -84,20 +102,59 @@
   $('motion-btn').addEventListener('click', function () { motion = !motion; applyMotion(); });
   applyMotion();
 
+  /* ---------- latency as load rises (SVG, log-scale ack p99) ---------- */
+  (function () {
+    var L = D.loadLatency, W = 600, H = 330, x0 = 64, x1 = 580, y0 = 280, y1 = 24;
+    var xMax = 480000, lo = Math.log10(0.5), hi = Math.log10(10000);
+    var X = function (r) { return (x0 + r / xMax * (x1 - x0)).toFixed(1); };
+    var Y = function (ms) { return (y0 - (Math.log10(ms) - lo) / (hi - lo) * (y0 - y1)).toFixed(1); };
+    var ms = function (v) { return v >= 1000 ? +(v / 1000).toFixed(2) + ' s' : v + ' ms'; };
+    var g = [];
+    [1, 10, 100, 1000, 10000].forEach(function (t) {
+      g.push('<line x1="' + x0 + '" y1="' + Y(t) + '" x2="' + x1 + '" y2="' + Y(t) + '" style="stroke:var(--line-2)"/>' +
+        '<text x="' + (x0 - 8) + '" y="' + (+Y(t) + 4) + '" text-anchor="end" fill="currentColor">' + ms(t) + '</text>');
+    });
+    [0, 100000, 200000, 300000, 400000].forEach(function (r) {
+      g.push('<text x="' + X(r) + '" y="' + (y0 + 20) + '" text-anchor="middle" fill="currentColor">' + (r ? r / 1000 + 'k' : '0') + '</text>');
+    });
+    g.push('<text x="' + ((x0 + x1) / 2) + '" y="' + (y0 + 40) + '" text-anchor="middle" fill="currentColor">offered msg/s</text>');
+    var c = L.competitor;
+    g.push('<line x1="' + X(c.rate) + '" y1="' + y1 + '" x2="' + X(c.rate) + '" y2="' + y0 + '" style="stroke:var(--amber)" stroke-width="2" stroke-dasharray="5 5"/>' +
+      '<text x="' + (+X(c.rate) - 8) + '" y="' + (y1 + 14) + '" text-anchor="end" style="fill:var(--amber)">' + esc(c.name) + ' published peak, ' + c.rate / 1000 + 'k</text>');
+    g.push('<polyline class="draw" fill="none" style="stroke:var(--accent)" stroke-width="3" stroke-linejoin="round" points="' +
+      L.carried.map(function (p) { return X(p[0]) + ',' + Y(p[1]); }).join(' ') + '"/>');
+    L.carried.forEach(function (p, i) {
+      var gap = X(c.rate) - X(p[0]), last = i === L.carried.length - 1 || (gap > 0 && gap < 75); // keep labels off the marker
+      g.push('<circle cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5.5" style="fill:var(--accent)"/>' +
+        '<text x="' + (+X(p[0]) + (last ? -12 : 10)) + '" y="' + (+Y(p[1]) + (last ? 4 : 18)) + '" text-anchor="' + (last ? 'end' : 'start') + '" style="fill:var(--text)">' + ms(p[1]) + '</text>');
+    });
+    L.throttled.forEach(function (p) {
+      g.push('<circle cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5" fill="none" style="stroke:var(--dim)" stroke-width="2"/>');
+    });
+    var top = L.carried[L.carried.length - 1];
+    $('lat-chart').innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" font-family="JetBrains Mono, monospace" font-size="12" aria-label="Ack p99 latency by offered load, durable QoS 1 on ' + esc(L.title) +
+      ': ' + L.carried.map(function (p) { return p[0].toLocaleString('en-US') + ' msg/s at ' + ms(p[1]); }).join(', ') + ', every step with no message lost. Above ' + top[0].toLocaleString('en-US') +
+      ' the brokers slowed publishers and still lost nothing.">' + g.join('') + '</svg>';
+  })();
+
   /* ---------- benchmark bars ---------- */
-  var maxB = Math.max.apply(null, D.bench.map(function (b) { return b.val; }));
-  $('bench').innerHTML = D.bench.map(function (b, i) {
-    return '<div class="brow"><div class="nm">' + esc(b.name) + ' <small>' + esc(b.ver) + '</small></div>' +
-      '<div class="track"><div class="fill' + (b.ours ? ' ours' : '') + '" style="width:' + (b.val / maxB * 100) + '%;transition-delay:' + (i * 0.15) + 's"></div></div>' +
-      '<div class="val">' + b.val.toLocaleString('en-US') + '</div></div>';
-  }).join('');
+  function bars(el, rows) {
+    var max = Math.max.apply(null, rows.map(function (b) { return b.val; }));
+    el.innerHTML = rows.map(function (b, i) {
+      return '<div class="brow"><div class="nm">' + esc(b.name) + ' <small>' + esc(b.ver) + '</small></div>' +
+        '<div class="track"><div class="fill' + (b.ours ? ' ours' : '') + '" style="width:' + (b.val / max * 100) + '%;transition-delay:' + (i * 0.15) + 's"></div></div>' +
+        '<div class="val">' + b.val.toLocaleString('en-US') + '</div></div>';
+    }).join('');
+  }
+  bars($('pervcpu'), D.perVcpu);
+  bars($('bench'), D.bench);
   $('lat').innerHTML = D.latency.map(function (l) {
     return '<div class="lrow"><div class="lt"><span>' + esc(l.name) + '</span><span class="mono">' + l.pct + '%</span></div>' +
       '<div class="track"><div class="fill' + (l.ours ? ' ours' : '') + '" style="width:' + l.pct + '%"></div></div></div>';
   }).join('');
 
   // animate bars and curves when they scroll into view
-  var targets = [$('bench'), $('lat'), document.querySelector('.chart')];
+  var targets = [$('pervcpu'), $('bench'), $('lat')].concat([].slice.call(document.querySelectorAll('.chart')));
   if ('IntersectionObserver' in window && !reduced) {
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in-view'); io.unobserve(e.target); } });
@@ -109,10 +166,43 @@
 
   /* ---------- TCO calculator ---------- */
   var T = D.tco;
-  var state = { rateIdx: 50, price: T.defaultPrice, wl: 'q0' };
-  var eur = function (x) { return '€' + Math.round(x).toLocaleString('en-US'); };
-  var fmtRate = function (r) { return r >= 1e6 ? (r / 1e6).toFixed(2).replace(/0$/, '') + 'M' : Math.round(r / 1000) + 'k'; };
-  var nodesFor = function (r, per) { return Math.max(T.minNodes, Math.ceil(r / per)); };
+  var RATE_MIN = 10000, RATE_SPAN = 200; // slider covers 10k .. 2M msg/s, log scale
+  var state = { rateIdx: 62, price: T.defaultPrice, wl: T.defaultWl };
+  var usd = function (x) { return '$' + Math.round(x).toLocaleString('en-US'); };
+  var fmtRate = function (r) { return r >= 1e6 ? +(r / 1e6).toFixed(2) + 'M' : Math.round(r / 1000) + 'k'; };
+  var fmtVcpu = function (v) { return (v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)) + ' vCPU'; };
+
+  // mqttd capacity from a measured curve: linear between measured points, the
+  // least-squares slope past the last one. One point means no proven scale-out: no extrapolation.
+  var slopeOf = function (c) {
+    if (c.length < 2) return 0;
+    var mx = 0, my = 0, sxy = 0, sxx = 0;
+    c.forEach(function (q) { mx += q[0] / c.length; my += q[1] / c.length; });
+    c.forEach(function (q) { sxy += (q[0] - mx) * (q[1] - my); sxx += (q[0] - mx) * (q[0] - mx); });
+    return sxy / sxx;
+  };
+  var capAt = function (c, n) {
+    var last = c[c.length - 1];
+    if (n <= c[0][0]) return c[0][1];
+    if (n >= last[0]) return c.length < 2 ? last[1] : last[1] + slopeOf(c) * (n - last[0]);
+    for (var i = 1; i < c.length; i++) {
+      if (n <= c[i][0]) return c[i - 1][1] + (c[i][1] - c[i - 1][1]) * (n - c[i - 1][0]) / (c[i][0] - c[i - 1][0]);
+    }
+  };
+  // -> { n, how: 'measured' | 'interpolated' | 'extrapolated' }, or null when not proven
+  var mqttdFor = function (r, c, noExtra) {
+    var last = c[c.length - 1];
+    if ((c.length < 2 || noExtra) && r > last[1]) return null;
+    for (var n = T.minNodes; n < 1000; n++) {
+      if (capAt(c, n) >= r) {
+        var hit = c.some(function (q) { return q[0] === n; });
+        return { n: n, how: n > last[0] ? 'extrapolated' : hit || n === c[0][0] ? 'measured' : 'interpolated' };
+      }
+    }
+    return null;
+  };
+  // A competitor priced per vCPU through its published point, with the same 3-node HA floor.
+  var theirVcpu = function (r, o, w) { return Math.max(T.minNodes * w.vcpu, r / o.perVcpu); };
 
   $('workloads').innerHTML = Object.keys(T.workloads).map(function (id) {
     return '<button type="button" class="wl" data-wl="' + id + '" aria-pressed="' + (id === state.wl) + '">' + esc(T.workloads[id].label) + '</button>';
@@ -123,37 +213,114 @@
     state.wl = b.getAttribute('data-wl');
     renderTco();
   });
+  $('rate').value = state.rateIdx;
+  $('price').value = state.price;
   $('rate').addEventListener('input', function (e) { state.rateIdx = +e.target.value; renderTco(); });
   $('price').addEventListener('input', function (e) { state.price = +e.target.value; renderTco(); });
 
   function renderTco() {
-    var raw = 10000 * Math.pow(120, state.rateIdx / 100);
+    var raw = RATE_MIN * Math.pow(RATE_SPAN, state.rateIdx / 100);
     var mag = Math.pow(10, Math.floor(Math.log10(raw)) - 1);
     var rate = Math.round(raw / mag) * mag;
     var w = T.workloads[state.wl];
-    var p = state.price;
-    var mqN = nodesFor(rate, w.mqttd);
+    var p = state.price, nodeP = p * w.vcpu;
+    var mq = mqttdFor(rate, w.curve, w.extrapolate === false);
+    var slope = slopeOf(w.curve);
+    var lastPt = w.curve[w.curve.length - 1];
 
     $('rate-label').textContent = fmtRate(rate) + ' msg/s';
-    $('price-label').textContent = '€' + p + '/mo';
-    $('mq-nodes').textContent = mqN;
-    $('mq-cost').textContent = eur(mqN * p);
-    $('marginal').textContent = '€' + (p / (w.mqttd / 1000)).toFixed(2);
-    document.querySelectorAll('.wl').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-wl') === state.wl)); });
+    $('price-label').textContent = '$' + p.toFixed(2) + '/vCPU·mo';
+    $('wl-desc').textContent = w.desc;
+    $('mq-nodes-l').textContent = 'MQTTD NODES · ' + w.vcpu + ' VCPU';
+    $('mq-nodes').textContent = mq ? mq.n : '—';
+    $('mq-cost').textContent = mq ? usd(mq.n * nodeP) : '—';
+    $('marginal').textContent = slope ? '$' + (nodeP / (slope / 1000)).toFixed(2) : '—';
+    document.querySelectorAll('.wl[data-wl]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-wl') === state.wl)); });
 
-    var rows = [{ name: 'mqttd', per: w.mqttd, note: 'Measured per-node rate, Apache-2.0, clustering free.', ours: true }].concat(w.others).map(function (d) {
-      if (!d.per) return { d: d, label: 'n/a', cost: 0, text: '—' };
-      if (d.single) return rate <= d.per ? { d: d, label: '1 node, no HA', cost: p, text: eur(p) + '/mo' } : { d: d, label: 'cannot carry this load', cost: 0, text: '—' };
-      var n = nodesFor(rate, d.per);
-      return { d: d, label: n + ' nodes', cost: n * p, text: eur(n * p) + '/mo' };
+    var pts = w.curve.map(function (q) { return q[0] + ' → ' + fmtRate(q[1]); }).join(', ');
+    var how = { interpolated: ' Interpolated between measured clusters.', extrapolated: ' Extrapolated past the largest measured cluster on ~' + fmtRate(slope) + ' msg/s per added node.' };
+    var mqNote = 'Measured on ' + w.node + ': ' + pts + ' msg/s.' + ((mq && how[mq.how]) || '') + ' Apache-2.0, clustering free.';
+    var rows = [{ name: 'mqttd', note: mqNote, ours: true }].concat(w.others).map(function (d) {
+      if (d.ours) return mq ? { d: d, label: mq.n + ' × ' + w.vcpu + ' vCPU', cost: mq.n * nodeP } : { d: d, label: 'beyond the largest measured cluster', cost: 0 };
+      var v = theirVcpu(rate, d, w);
+      return { d: d, label: fmtVcpu(v), cost: v * p };
     });
     var max = Math.max.apply(null, rows.map(function (r) { return r.cost; })) || 1;
     $('alts').innerHTML = rows.map(function (r) {
       var pct = r.cost ? Math.max(r.cost / max * 100, 2) : 0;
-      return '<div class="alt"><div class="at"><span><b>' + esc(r.d.name) + '</b> <small>· ' + esc(r.label) + '</small></span><span class="mono">' + r.text + '</span></div>' +
+      return '<div class="alt"><div class="at"><span><b>' + esc(r.d.name) + '</b> <small>· ' + esc(r.label) + '</small></span><span class="mono">' + (r.cost ? usd(r.cost) + '/mo' : '—') + '</span></div>' +
         '<div class="track"><div class="fill ' + (r.d.ours ? 'ours' : 'amber') + '" style="width:' + pct + '%"></div></div>' +
         '<div class="nt">' + esc(r.d.note) + '</div></div>';
+    }).join('') + (w.others.length ? '' : '<p class="note">No competitor has published a like-for-like figure for this workload, so none is drawn.</p>');
+    renderSwitch(rate, w, p);
+  }
+
+  /* ---------- switch from HiveMQ / EMQX (driven by the TCO state) ---------- */
+  var S = D.switchFrom;
+  var sw = Object.keys(S)[0];
+  $('sw-tabs').innerHTML = Object.keys(S).map(function (k) {
+    return '<button type="button" class="wl" data-sw="' + k + '" aria-pressed="' + (k === sw) + '">From ' + esc(S[k].label) + '</button>';
+  }).join('');
+  $('sw-tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-sw]');
+    if (!b) return;
+    sw = b.getAttribute('data-sw');
+    renderTco();
+  });
+
+  function renderSwitch(rate, w, p) {
+    var c = S[sw];
+    document.querySelectorAll('[data-sw]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-sw') === sw)); });
+    document.querySelectorAll('.sw-from').forEach(function (e) { e.textContent = c.label; });
+    $('sw-lic').textContent = c.lic;
+    $('sw-facts').innerHTML = c.facts.map(function (f) {
+      return '<div class="stat"><b>' + esc(f[0]) + '</b><span>' + esc(f[1]) + '</span><span class="nt">' + esc(f[2]) + '</span></div>';
     }).join('');
+    $('sw-steps').innerHTML = c.steps.map(function (s) {
+      return '<li><b>' + esc(s[0]) + '</b> ' + esc(s[1]) + '</li>';
+    }).join('');
+    $('sw-keep').textContent = c.keep;
+
+    $('sw-save').innerHTML = c.headline;
+    $('sw-sub').textContent = c.sub;
+    $('sw-upto-note').textContent = c.headlineNote;
+    // Real list prices: each side's own instance type, not the shared per-vCPU basis.
+    var lp = c.listPrice;
+    $('sw-list').hidden = !lp;
+    if (lp) {
+      var month = function (x) { return x.nodes * x.perHour * 730; };
+      var perM = function (x) { return month(x) / (x.rate / 1e6); };
+      var t = lp.theirs, o = lp.ours;
+      $('sw-list').innerHTML = '<b>At real AWS list prices,</b> on ' + esc(t.name.split(' ')[0]) + '\'s own shape: ' + esc(o.host) + ' costs ' + usd(month(o)) +
+        ' a month against ' + usd(month(t)) + ' for ' + esc(t.host) + ', since m6i costs more per vCPU than m6a. It carries ' + o.rate.toLocaleString('en-US') +
+        ' msg/s against ' + t.rate.toLocaleString('en-US') + ', so ' + usd(perM(o)) + ' per million msg/s against ' + usd(perM(t)) + ': <b>' +
+        Math.round((1 - perM(o) / perM(t)) * 100) + '% less per message</b>, before ' + esc(t.name.split(' ')[0]) + '\'s licence. On-demand, us-east-1, Linux, 730 hours a month.';
+    }
+
+    var find = function (wk) { return wk.others.filter(function (o) { return o.name === c.cmp; })[0]; };
+    var withData = Object.keys(T.workloads).map(function (k) { return T.workloads[k]; }).filter(find);
+    $('sw-live').hidden = !withData.length;
+    if (!withData.length) return;
+
+    // Live comparison at the calculator's load; fall back to a workload with data.
+    var wl = find(w) ? w : withData[0], them = find(wl);
+    var us = mqttdFor(rate, wl.curve, wl.extrapolate === false), tv = theirVcpu(rate, them, wl);
+    var pre = wl !== w ? w.label + ' has no published ' + c.label + ' figure, so this uses ' + wl.label + '. ' : '';
+    $('sw-them-l').textContent = c.label.toUpperCase() + ' · VCPU';
+    $('sw-them').textContent = Math.round(tv);
+    $('sw-us').textContent = us ? us.n * wl.vcpu : '—';
+    $('sw-year').textContent = us ? usd(Math.max(0, tv * p - us.n * wl.vcpu * p) * 12) : '—';
+    if (!us) {
+      var lp = wl.curve[wl.curve.length - 1];
+      $('sw-note').textContent = pre + 'mqttd ' + wl.label + ' is measured up to ' + fmtRate(lp[1]) + ' msg/s on ' + lp[0] + ' nodes, and its per-node rate falls with size, so there is no mqttd figure at ' +
+        fmtRate(rate) + ' msg/s. Lower the rate in the calculator, or see the site-bridge shape, measured to 2M.';
+    } else {
+      var ours = us.n * wl.vcpu;
+      $('sw-note').textContent = pre + 'At ' + fmtRate(rate) + ' msg/s ' + wl.label + ' and $' + p.toFixed(2) + ' per vCPU-month: ' + usd(tv * p) + '/mo on ' + them.name +
+        ' vs ' + usd(ours * p) + '/mo on ' + us.n + ' mqttd nodes' + (tv > ours ? ' (' + (tv / ours).toFixed(1) + '× less hardware).' : ', both at the three-node HA minimum.') +
+        (us.how === 'measured' ? '' : ' The mqttd node count is ' + us.how + ' from measured clusters.') +
+        ' Licence and support fees come on top for ' + c.label + '. Same caveats as the calculator.';
+    }
   }
   renderTco();
 })();
