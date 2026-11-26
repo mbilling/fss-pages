@@ -118,6 +118,15 @@ window.FSS = {
       headline: 'and run the same load on <span class="accent">58% less hardware</span>',
       sub: "HiveMQ's published benchmark peak, 270,000 durable msg/s, took 96 vCPU. Ten 4-vCPU mqttd nodes, 40 vCPU, carried more, with no message lost.",
       headlineNote: "Both points are measured, no line drawn: HiveMQ 4.18's own published run on 3 × 32 vCPU, and mqttd's 292,200 msg/s on 10 × 4 vCPU (ack p99 1.37 s; 228,000 at ack p99 ≤ 1 s). At the same price per vCPU that is $1,261 a month against $3,027, before HiveMQ's licence.",
+      // At each side's real AWS list price, on HiveMQ's own shape (3 nodes x 32 vCPU), 730 h a month.
+      // HiveMQ: 3 x m6a.8xlarge, $1.3824/h (EVIDENCE.md price basis), 270,000 msg/s published.
+      // mqttd: 3 x m6i.8xlarge, v1.3.0, 366,300 msg/s (RIG2-RESULTS.md).
+      // VERIFY before publishing: the m6i.8xlarge price is from memory, not yet checked against
+      // aws.amazon.com/ec2/pricing/on-demand (us-east-1, Linux).
+      listPrice: {
+        theirs: { name: 'HiveMQ 4.18', host: '3 × m6a.8xlarge', perHour: 1.3824, nodes: 3, rate: 270000 },
+        ours: { name: 'mqttd v1.3.0', host: '3 × m6i.8xlarge', perHour: 1.536, nodes: 3, rate: 366300 }
+      },
       facts: [
         ['+36%', "durable msg/s on HiveMQ's own hardware, 3 × 32 vCPU", '366,300 vs 270,000 published · v1.3.0 · no message lost'],
         ['58%', "less hardware for HiveMQ's published peak", '40 vCPU vs 96 for 270,000 msg/s'],

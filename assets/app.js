@@ -284,6 +284,18 @@
     $('sw-save').innerHTML = c.headline;
     $('sw-sub').textContent = c.sub;
     $('sw-upto-note').textContent = c.headlineNote;
+    // Real list prices: each side's own instance type, not the shared per-vCPU basis.
+    var lp = c.listPrice;
+    $('sw-list').hidden = !lp;
+    if (lp) {
+      var month = function (x) { return x.nodes * x.perHour * 730; };
+      var perM = function (x) { return month(x) / (x.rate / 1e6); };
+      var t = lp.theirs, o = lp.ours;
+      $('sw-list').innerHTML = '<b>At real AWS list prices,</b> on ' + esc(t.name.split(' ')[0]) + '\'s own shape: ' + esc(o.host) + ' costs ' + usd(month(o)) +
+        ' a month against ' + usd(month(t)) + ' for ' + esc(t.host) + ', since m6i costs more per vCPU than m6a. It carries ' + o.rate.toLocaleString('en-US') +
+        ' msg/s against ' + t.rate.toLocaleString('en-US') + ', so ' + usd(perM(o)) + ' per million msg/s against ' + usd(perM(t)) + ': <b>' +
+        Math.round((1 - perM(o) / perM(t)) * 100) + '% less per message</b>, before ' + esc(t.name.split(' ')[0]) + '\'s licence. On-demand, us-east-1, Linux, 730 hours a month.';
+    }
 
     var find = function (wk) { return wk.others.filter(function (o) { return o.name === c.cmp; })[0]; };
     var withData = Object.keys(T.workloads).map(function (k) { return T.workloads[k]; }).filter(find);

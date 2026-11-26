@@ -333,6 +333,9 @@ h4 { font-size: 20px; font-weight: 700; }
 .lat-chart { flex: none; }
 .sw-live { display: flex; flex-direction: column; gap: 22px; }
 .sw-live[hidden] { display: none; }
+.sw-list { padding: 14px 18px; border-left: 2px solid var(--amber); background: var(--panel); border-radius: 0 10px 10px 0; font-size: 15px; line-height: 1.55; color: var(--text-2); max-width: 900px; }
+.sw-list b { color: var(--text); }
+.sw-list[hidden] { display: none; }
 
 /* tco */
 .tco { display: flex; flex-wrap: wrap; gap: 24px; }
