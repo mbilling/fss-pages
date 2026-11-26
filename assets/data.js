@@ -25,6 +25,17 @@ window.FSS = {
       desc: 'An assistant that reads metrics, audit trail and admin CLI to explain incidents and propose fixes. Every action stays a reviewable command.' }
   ],
 
+  // Latency as load rises, durable QoS 1 on HiveMQ's own shape: 3 x m6i.8xlarge (96 vCPU), v1.3.0.
+  // RIG2-RESULTS.md "3 x m6i.8xlarge, v1.3.0" (run h3-20261104T183144Z): [offered msg/s, ack p99 ms].
+  // carried: every round lossless, brokers took >= 99% of the offer. throttled: brokers took less
+  // than the offer (publishers slowed by backpressure); still no message lost.
+  loadLatency: {
+    title: "3 × 32 vCPU, HiveMQ 4.18's benchmark shape",
+    carried: [[150000, 0.7], [187500, 1.1], [234400, 11.5], [293000, 48.8], [366300, 1610]],
+    throttled: [[377800, 4330], [389200, 3700], [412100, 3980], [457900, 3810]],
+    competitor: { name: 'HiveMQ 4.18', rate: 270000 }
+  },
+
   // Durable QoS 1 per vCPU, 2 copies (EVIDENCE.md "Node size"; headline.csv durable-per-vcpu)
   perVcpu: [
     { name: 'mqttd', ver: '4-vCPU nodes · 3 × CCX23', val: 11900, ours: true },
@@ -96,14 +107,20 @@ window.FSS = {
     }
   },
 
-  // "Switch from" section. Savings are computed live in app.js from tco above
-  // (cmp = the tco.workloads[*].others[].name this competitor is priced from).
+  // "Switch from" section. headline/sub/headlineNote are fixed claims, each traced in a comment.
+  // The live comparison is computed in app.js from tco above (cmp = the
+  // tco.workloads[*].others[].name this competitor is priced from); no cmp, no live block.
   switchFrom: {
     hivemq: {
       label: 'HiveMQ', cmp: 'HiveMQ 4.18', lic: 'Commercial clustering',
+      // Measured on both sides, no line drawn (EVIDENCE.md "In money"): HiveMQ's published
+      // 270,000 msg/s on 96 vCPU; mqttd 292,200 on 10 x 4 vCPU = 40 vCPU. 1 - 40/96 = 58%.
+      headline: 'and run the same load on <span class="accent">58% less hardware</span>',
+      sub: "HiveMQ's published benchmark peak, 270,000 durable msg/s, took 96 vCPU. Ten 4-vCPU mqttd nodes, 40 vCPU, carried more, with no message lost.",
+      headlineNote: "Both points are measured, no line drawn: HiveMQ 4.18's own published run on 3 × 32 vCPU, and mqttd's 292,200 msg/s on 10 × 4 vCPU (ack p99 1.37 s; 228,000 at ack p99 ≤ 1 s). At the same price per vCPU that is $1,261 a month against $3,027, before HiveMQ's licence.",
       facts: [
-        ['1.36×', "durable msg/s on HiveMQ's own shape, 3 × 32 vCPU", '366,300 vs 270,000 published · v1.3.0 · no loss'],
-        ['4.2×', 'durable QoS 1 per vCPU on 4-vCPU nodes', '11,900 vs 2,812 · 2 copies · same CPU family'],
+        ['+36%', "durable msg/s on HiveMQ's own hardware, 3 × 32 vCPU", '366,300 vs 270,000 published · v1.3.0 · no message lost'],
+        ['58%', "less hardware for HiveMQ's published peak", '40 vCPU vs 96 for 270,000 msg/s'],
         ['$0', 'licence for clustering', 'HiveMQ CE is single-node; clustering is commercial, price not published']
       ],
       steps: [
@@ -116,13 +133,13 @@ window.FSS = {
     emqx: {
       label: 'EMQX', lic: 'BSL 1.1 clustering',
       headline: 'and keep clustering free',
+      headlineNote: 'No EMQX cluster has been measured on the current rig, so there is no like-for-like cost figure. The comparison below is the earlier single-node run, on one host, in sequence.',
       sub: 'EMQX licenses production clustering under BSL 1.1 since 5.9. mqttd clusters, replicates sessions and runs its operator under Apache-2.0.',
       facts: [
         ['1.7×', 'single-node throughput on the same 4-vCPU host', '75k vs 45k msg/s QoS 0 · earlier rig, 2026-09-16'],
         ['97.8%', 'delivered within 10 ms at 45k msg/s', 'EMQX: 14.9% · earlier rig, same host'],
         ['$0', 'licence for clustering', 'EMQX 5.9+ clusters in production under BSL 1.1']
       ],
-      noCost: 'No EMQX cluster has been measured on the current rig, so there is no like-for-like cost figure. The comparison above is the earlier single-node run, on one host, in sequence.',
       steps: [
         ['Convert', 'The built-in EMQX converter turns your config and ACLs into a reviewed mqttd draft.'],
         ['Bridge', 'Run mqtt-bridge between EMQX and mqttd with deny-by-default rules, and move site by site.'],

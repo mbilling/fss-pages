@@ -95,8 +95,8 @@
 
     <div class="kpis">
       <div class="kpi"><b>2.0M</b><span>durable QoS 1 msg/s on 12 nodes, no message lost</span><em>165k a node from 3 to 12 · ack after fsync + quorum copy</em></div>
-      <div class="kpi"><b>1.36×</b><span>HiveMQ 4.18's durable throughput on its own 3 × 32 vCPU shape</span><em>366,300 vs 270,000 published · v1.3.0</em></div>
-      <div class="kpi"><b>4.2×</b><span>less hardware cost than HiveMQ for the same durable traffic</span><em>3 × 4 vCPU · AWS prices · their licence extra</em></div>
+      <div class="kpi"><b>+36%</b><span>more durable msg/s than HiveMQ 4.18 on the same hardware</span><em>3 × 32 vCPU · 366,300 vs 270,000 published</em></div>
+      <div class="kpi"><b>0</b><span>messages lost on HiveMQ's hardware, at every load step up to and past the peak</span><em>latency rises with load; nothing is dropped</em></div>
       <div class="kpi"><b>$0</b><span>licence for clustering and every feature</span><em>support and SLAs are the only paid things</em></div>
     </div>
 
@@ -155,11 +155,32 @@
   <div class="wrap section">
     <div class="head">
       <div class="eyebrow">MEASURED, NOT CLAIMED</div>
-      <h2>Durable QoS 1, per vCPU, against HiveMQ.</h2>
-      <p>Every acknowledgement waits for fsync and a second copy on another node: the hardest path a broker serves. Maximum lossless msg/s per vCPU, 2 copies, 200-byte payloads. HiveMQ 4.18's figure is its own published run on 3 × 32 vCPU, the same AMD EPYC Milan family as our CCX23s.</p>
+      <h2>More load, more latency. Never a lost message.</h2>
+      <p>Durable QoS 1 on the hardware HiveMQ used for its own benchmark: three 32-vCPU nodes. Every acknowledgement waits for fsync and a second copy on another node. Each step ran three rounds; the ack p99 is their mean.</p>
+    </div>
+    <figure class="chart lat-chart">
+      <div id="lat-chart"></div>
+      <figcaption>
+        <span><i class="sw" style="background:var(--accent)"></i>Carried, no message lost</span>
+        <span><i class="ring" style="border-color:var(--dim)"></i>Past the peak: publishers slowed, still none lost</span>
+        <span><i class="dash" style="border-color:var(--amber)"></i>HiveMQ 4.18's published peak</span>
+      </figcaption>
+    </figure>
+    <div class="stats lat-stats">
+      <div class="stat"><span>AT 150K MSG/S</span><b>0.7 ms</b></div>
+      <div class="stat"><span>AT 293K · ABOVE HIVEMQ'S PEAK</span><b>49 ms</b></div>
+      <div class="stat stat-accent"><span>PEAK CARRIED · +36%</span><b>366k</b></div>
+      <div class="stat"><span>MESSAGES LOST</span><b class="accent">0</b></div>
+    </div>
+    <p class="note">v1.3.0 as released, every default, AWS m6i.8xlarge, 200-byte payloads, 20,000 clients like HiveMQ's run, 2026-11-04 (<a href="https://github.com/mbilling/fss-mqtt-broker/blob/main/docs/benchmarks/RIG2-RESULTS.md#3--m6i8xlarge-v130">run card</a>). Past 366,300 msg/s the brokers took less than the offer, so publishers waited for acks; no round lost a message. HiveMQ's figure is its own published run, not reproduced by us; its payload is not published.</p>
+
+    <div class="head earlier">
+      <div class="eyebrow">PER VCPU</div>
+      <h3 class="h3">Small nodes carry the most per vCPU.</h3>
+      <p>Maximum lossless durable msg/s per vCPU, 2 copies. A node's throughput is bound by its one hub task far more than by its vCPU count.</p>
     </div>
     <div class="bench" id="pervcpu"></div>
-    <p class="note">A node's throughput is bound by its one hub task far more than by its vCPU, so small nodes win per vCPU. On HiveMQ's own shape mqttd still carries 1.36× its figure. HiveMQ's number is not reproduced by us and its payload is not published. Sources: the broker's <a href="https://github.com/mbilling/fss-mqtt-broker/blob/main/docs/benchmarks/EVIDENCE.md">EVIDENCE.md</a> (2026-11-04) and <a href="https://github.com/mbilling/fss-mqtt-broker/blob/main/docs/benchmarks/RIG2-RESULTS.md">RIG2-RESULTS.md</a>.</p>
+    <p class="note">Sources: the broker's <a href="https://github.com/mbilling/fss-mqtt-broker/blob/main/docs/benchmarks/EVIDENCE.md">EVIDENCE.md</a> (2026-11-04) and <a href="https://github.com/mbilling/fss-mqtt-broker/blob/main/docs/benchmarks/RIG2-RESULTS.md">RIG2-RESULTS.md</a>.</p>
 
     <div class="head earlier">
       <div class="eyebrow">EARLIER RIG · 2026-09-16</div>

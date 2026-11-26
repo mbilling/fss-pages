@@ -102,6 +102,41 @@
   $('motion-btn').addEventListener('click', function () { motion = !motion; applyMotion(); });
   applyMotion();
 
+  /* ---------- latency as load rises (SVG, log-scale ack p99) ---------- */
+  (function () {
+    var L = D.loadLatency, W = 600, H = 330, x0 = 64, x1 = 580, y0 = 280, y1 = 24;
+    var xMax = 480000, lo = Math.log10(0.5), hi = Math.log10(10000);
+    var X = function (r) { return (x0 + r / xMax * (x1 - x0)).toFixed(1); };
+    var Y = function (ms) { return (y0 - (Math.log10(ms) - lo) / (hi - lo) * (y0 - y1)).toFixed(1); };
+    var ms = function (v) { return v >= 1000 ? +(v / 1000).toFixed(2) + ' s' : v + ' ms'; };
+    var g = [];
+    [1, 10, 100, 1000, 10000].forEach(function (t) {
+      g.push('<line x1="' + x0 + '" y1="' + Y(t) + '" x2="' + x1 + '" y2="' + Y(t) + '" style="stroke:var(--line-2)"/>' +
+        '<text x="' + (x0 - 8) + '" y="' + (+Y(t) + 4) + '" text-anchor="end" fill="currentColor">' + ms(t) + '</text>');
+    });
+    [0, 100000, 200000, 300000, 400000].forEach(function (r) {
+      g.push('<text x="' + X(r) + '" y="' + (y0 + 20) + '" text-anchor="middle" fill="currentColor">' + (r ? r / 1000 + 'k' : '0') + '</text>');
+    });
+    g.push('<text x="' + ((x0 + x1) / 2) + '" y="' + (y0 + 40) + '" text-anchor="middle" fill="currentColor">offered msg/s</text>');
+    var c = L.competitor;
+    g.push('<line x1="' + X(c.rate) + '" y1="' + y1 + '" x2="' + X(c.rate) + '" y2="' + y0 + '" style="stroke:var(--amber)" stroke-width="2" stroke-dasharray="5 5"/>' +
+      '<text x="' + (+X(c.rate) - 8) + '" y="' + (y1 + 14) + '" text-anchor="end" style="fill:var(--amber)">' + esc(c.name) + ' published peak, ' + c.rate / 1000 + 'k</text>');
+    g.push('<polyline class="draw" fill="none" style="stroke:var(--accent)" stroke-width="3" stroke-linejoin="round" points="' +
+      L.carried.map(function (p) { return X(p[0]) + ',' + Y(p[1]); }).join(' ') + '"/>');
+    L.carried.forEach(function (p, i) {
+      var gap = X(c.rate) - X(p[0]), last = i === L.carried.length - 1 || (gap > 0 && gap < 75); // keep labels off the marker
+      g.push('<circle cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5.5" style="fill:var(--accent)"/>' +
+        '<text x="' + (+X(p[0]) + (last ? -12 : 10)) + '" y="' + (+Y(p[1]) + (last ? 4 : 18)) + '" text-anchor="' + (last ? 'end' : 'start') + '" style="fill:var(--text)">' + ms(p[1]) + '</text>');
+    });
+    L.throttled.forEach(function (p) {
+      g.push('<circle cx="' + X(p[0]) + '" cy="' + Y(p[1]) + '" r="5" fill="none" style="stroke:var(--dim)" stroke-width="2"/>');
+    });
+    var top = L.carried[L.carried.length - 1];
+    $('lat-chart').innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" font-family="JetBrains Mono, monospace" font-size="12" aria-label="Ack p99 latency by offered load, durable QoS 1 on ' + esc(L.title) +
+      ': ' + L.carried.map(function (p) { return p[0].toLocaleString('en-US') + ' msg/s at ' + ms(p[1]); }).join(', ') + ', every step with no message lost. Above ' + top[0].toLocaleString('en-US') +
+      ' the brokers slowed publishers and still lost nothing.">' + g.join('') + '</svg>';
+  })();
+
   /* ---------- benchmark bars ---------- */
   function bars(el, rows) {
     var max = Math.max.apply(null, rows.map(function (b) { return b.val; }));
@@ -119,7 +154,7 @@
   }).join('');
 
   // animate bars and curves when they scroll into view
-  var targets = [$('pervcpu'), $('bench'), $('lat'), document.querySelector('.chart')];
+  var targets = [$('pervcpu'), $('bench'), $('lat')].concat([].slice.call(document.querySelectorAll('.chart')));
   if ('IntersectionObserver' in window && !reduced) {
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in-view'); io.unobserve(e.target); } });
@@ -134,7 +169,7 @@
   var RATE_MIN = 10000, RATE_SPAN = 200; // slider covers 10k .. 2M msg/s, log scale
   var state = { rateIdx: 62, price: T.defaultPrice, wl: T.defaultWl };
   var usd = function (x) { return '$' + Math.round(x).toLocaleString('en-US'); };
-  var fmtRate = function (r) { return r >= 1e6 ? (r / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M' : Math.round(r / 1000) + 'k'; };
+  var fmtRate = function (r) { return r >= 1e6 ? +(r / 1e6).toFixed(2) + 'M' : Math.round(r / 1000) + 'k'; };
   var fmtVcpu = function (v) { return (v < 100 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)) + ' vCPU'; };
 
   // mqttd capacity from a measured curve: linear between measured points, the
@@ -246,30 +281,14 @@
     }).join('');
     $('sw-keep').textContent = c.keep;
 
+    $('sw-save').innerHTML = c.headline;
+    $('sw-sub').textContent = c.sub;
+    $('sw-upto-note').textContent = c.headlineNote;
+
     var find = function (wk) { return wk.others.filter(function (o) { return o.name === c.cmp; })[0]; };
     var withData = Object.keys(T.workloads).map(function (k) { return T.workloads[k]; }).filter(find);
     $('sw-live').hidden = !withData.length;
-    if (!withData.length) {
-      $('sw-save').textContent = c.headline;
-      $('sw-sub').textContent = c.sub;
-      $('sw-upto-note').textContent = c.noCost;
-      return;
-    }
-
-    // Headline: the best saving at a measured mqttd cluster, in hardware at the same price per vCPU.
-    var best = { pct: 0 };
-    withData.forEach(function (wk) {
-      var o = find(wk);
-      wk.curve.forEach(function (q) {
-        var ours = q[0] * wk.vcpu, theirs = theirVcpu(q[1], o, wk), v = Math.round((1 - ours / theirs) * 100);
-        if (v > best.pct) best = { pct: v, wl: wk, o: o, q: q, ours: ours, theirs: theirs };
-      });
-    });
-    $('sw-save').innerHTML = 'and save <span class="accent">up to ' + best.pct + '%</span>';
-    $('sw-sub').textContent = 'The same durable traffic on a fraction of the hardware, and clustering with no licence. Apache-2.0 from the first node to the last.';
-    $('sw-upto-note').textContent = '"Up to ' + best.pct + '%" is measured, not modelled: ' + best.q[0] + ' mqttd nodes (' + best.ours + ' vCPU) carry ' +
-      best.q[1].toLocaleString('en-US') + ' msg/s of ' + best.wl.label + '; at its published rate, ' + best.o.name + ' needs ' + fmtVcpu(best.theirs) +
-      ' for that (' + (best.theirs / best.ours).toFixed(1) + '× the hardware). Same price per vCPU, licence not included.';
+    if (!withData.length) return;
 
     // Live comparison at the calculator's load; fall back to a workload with data.
     var wl = find(w) ? w : withData[0], them = find(wl);
